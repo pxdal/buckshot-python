@@ -23,9 +23,10 @@ max_shells_per_set = 8
 min_health = 2
 max_health = 4
 
+max_items = 8
+
 base_live_damage = 1
 sawedoff_live_damage = 2
-
 
 ## utility methods ##
 
@@ -63,17 +64,38 @@ def get_random_health():
 # a participant in the game.  there are only two, the dealer and the player, but both inherit from this for shared behavior (such as health, items, etc.)
 class Participant():
     def __init__(self):
-        self.health = 4
+        self.health = 0
+        self.items = []
+        
+        self.current_max_health = 0
     
     def set_health(self, new_health):
         self.health = new_health
+        self.current_max_health = new_health
         
     def take_damage(self, damage):
         self.health -= damage
     
+    def give_health(self, health):
+        self.health = min(self.health + health, self.current_max_health)
+        
     def is_dead(self):
         return self.health < 1
     
+    def give_items(self, items):
+        self.items += items
+        
+        # cap items
+        # this is authentic, as buckshot roulette won't let you keep any items past your limit and instead makes you put them back in the box
+        self.items = self.items[:max_items]
+    
+    def reset_items(self):
+        self.items = []
+        
+    def has_item(self, name):
+        return name in self.items
+
+# participant with some real authentic dealer ai
 class Dealer(Participant):
     def __init__(self):
         super().__init__()
@@ -81,6 +103,7 @@ class Dealer(Participant):
     def take_turn(self, run):
         run.shoot(bool(random.randint(0, 1)))
     
+# an entire run of buckshot roulette, see big comment at the start of the file for definition
 class BuckshotRun():
     nobody_id = -1
     player_id = 0
@@ -116,6 +139,14 @@ class BuckshotRun():
         
         # is the end of the barrel currently sawed off?
         self.is_sawed_off = False
+        
+        # item settings #
+        self.item_behaviors = {
+            "knife": self.knife_behavior,
+            "cigarretes": self.cigarretes_behavior
+        }
+        
+        self.item_names = self.item_behaviors.keys()
     
     # check integer ids
     def is_player(self, int_id):
@@ -143,6 +174,9 @@ class BuckshotRun():
     
     def chamber_is_empty(self):
         return len(self.chamber) == 0
+    
+    def empty_chamber(self):
+        self.chamber = []
     
     def load_chamber(self):
         self.chamber = get_random_chamber_sequence()
@@ -191,6 +225,16 @@ class BuckshotRun():
         
         return is_cuffed
     
+    # whomever has this turn uses the named item, or throws an exception if that item isn't in the participant's inventory.
+    def use_item(self, item_name):
+        user, opposite = self.whose_turn()
+        
+        if user.has_item(item_name):
+            # use item
+            self.get_item_behavior(item_name)(user, opposite)
+        else:
+            raise Exception(item_name + " isn't in the user's inventory.")
+    
     # whomever has this turn fires the gun.  because shooting the gun tends to be the last action before switching turns, sets, etc., this also handles most of the state transition logic
     def shoot(self, shooting_self):
         bullet = self.pop_next_bullet()
@@ -227,16 +271,19 @@ class BuckshotRun():
             return
         elif self.dealer.is_dead():
             # advance to next round
-            # TODO: also reset items
             self.current_round += 1
             
             if self.is_match_over():
                 self.matches_won += 1
                 
                 self.current_round = 1
+            else:
+                # NOTE: this is intended behavior. the items don't reset between the third round of a match and the first round of the following match in the game
+                self.player.reset_items()
+                self.dealer.reset_items()
             
-            # set health
             self.give_both_random_health()
+            self.empty_chamber()
         
         # is this set over?
         if self.chamber_is_empty():
@@ -245,6 +292,8 @@ class BuckshotRun():
             
             # player always gets first turn
             self.whose_turn_id = self.player_id
+            
+            # give each items
     
     # if it's the dealer's turn, run the dealer ai until the dealer finishes his turn.
     def dealer_ai_turn(self):
@@ -253,6 +302,19 @@ class BuckshotRun():
         
     def is_over(self):
         return self.game_over
+    
+    def get_item_behavior(self, item_name):
+        return self.item_behaviors[item_name]
+    
+    ## item behaviors ##
+    # all item behaviors require a user and the opposite player.  it's kinda sketchy, but whatever.
+    # some items require additional input from the user.
+    
+    def knife_behavior(self, user, opposite):
+        self.is_sawed_off = True
+    
+    def cigarretes_behavior(self, user, opposite):
+        user.give_health(1)
 
 def main(argc, argv):
     run = BuckshotRun()
@@ -266,8 +328,8 @@ def main(argc, argv):
         
         if run.is_player_turn():
             print("taking player turn")
-            # run.shoot(bullet_is_blank(run.peek_next_bullet()))
-            run.shoot(bool(random.randint(0, 1)))
+            run.shoot(bullet_is_blank(run.peek_next_bullet()))
+            # run.shoot(bool(random.randint(0, 1)))
         else:
             print("taking dealer turn")
             run.dealer_ai_turn()
