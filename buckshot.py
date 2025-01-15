@@ -15,11 +15,17 @@ import random
 live_token = True
 blank_token = False
 
+rounds_per_match = 3
+
 min_shells_per_set = 2
 max_shells_per_set = 8
 
+min_health = 2
+max_health = 4
+
 base_live_damage = 1
 sawedoff_live_damage = 2
+
 
 ## utility methods ##
 
@@ -46,8 +52,12 @@ def get_random_chamber_sequence():
     
     random.shuffle(sequence)
     
-    return num_live, num_blank, sequence
+    return sequence
 
+# health is a random number between 2 and 4
+def get_random_health():
+    return random.randint(min_health, max_health)
+    
 ## classes ##
 
 # a participant in the game.  there are only two, the dealer and the player, but both inherit from this for shared behavior (such as health, items, etc.)
@@ -60,6 +70,9 @@ class Participant():
         
     def take_damage(self, damage):
         self.health -= damage
+    
+    def is_dead(self):
+        return self.health < 1
     
 class Dealer(Participant):
     def __init__(self):
@@ -76,21 +89,33 @@ class BuckshotRun():
     def __init__(self):
         self.player = Participant()
         self.dealer = Dealer()
-    
+        
+        # initial health
+        self.give_both_random_health()
+        
         # the current sequence of bullets in the chamber
-        self.chamber = get_random_chamber_sequence()[2]
+        self.chamber = []
+        self.load_chamber()
+        
+        # matches won by the player (if the dealer wins any, it's just game over)
+        self.matches_won = 0
         
         # game state settings #
+        
+        # will be set to true if the game is over for the player
+        self.game_over = False
+        
+        # starts at 1 and goes up to rounds_per_match
+        self.current_round = 1
         
         # who has the gun?
         self.whose_turn_id = self.player_id
         
         # NOTE: it is impossible for both player and dealer to be handcuffed at the same time
-        # self.who_handcuffed_id = self.nobody_id
-        self.who_handcuffed_id = self.dealer_id
+        self.who_handcuffed_id = self.nobody_id
         
         # is the end of the barrel currently sawed off?
-        self.is_sawed_off = True
+        self.is_sawed_off = False
     
     # check integer ids
     def is_player(self, int_id):
@@ -115,6 +140,21 @@ class BuckshotRun():
     # pops the bullet from the front and returns it
     def pop_next_bullet(self):
         return self.chamber.pop(0)
+    
+    def chamber_is_empty(self):
+        return len(self.chamber) == 0
+    
+    def load_chamber(self):
+        self.chamber = get_random_chamber_sequence()
+    
+    def is_match_over(self):
+        return self.current_round > rounds_per_match
+    
+    def give_both_random_health(self):
+        health = get_random_health()
+        
+        self.player.set_health(health)
+        self.dealer.set_health(health)
     
     # get the provided bullet's damage accounting for current game state
     def get_bullet_current_damage(self, bullet):
@@ -151,7 +191,7 @@ class BuckshotRun():
         
         return is_cuffed
     
-    # whomever has this turn fires the gun.  this also handles turn logic, game state setting, etc.
+    # whomever has this turn fires the gun.  because shooting the gun tends to be the last action before switching turns, sets, etc., this also handles most of the state transition logic
     def shoot(self, shooting_self):
         bullet = self.pop_next_bullet()
         damage = self.get_bullet_current_damage(bullet)
@@ -175,13 +215,36 @@ class BuckshotRun():
                 if not self.is_handcuffed(opposite, uncuff=True):
                     self.swap_turn()
         
-        # reset appropriate game state
+        # reset game state as needed
+        
+        # always resets
         self.is_sawed_off = False
-    
-    ## -- all functions below are for the player.  the dealer will have its own AI. -- ##
-    
-    
-    ## -- end player functions -- ##
+        
+        # check game end conditions
+        if self.player.is_dead():
+            # game over, quit logic
+            self.game_over = True
+            return
+        elif self.dealer.is_dead():
+            # advance to next round
+            # TODO: also reset items
+            self.current_round += 1
+            
+            if self.is_match_over():
+                self.matches_won += 1
+                
+                self.current_round = 1
+            
+            # set health
+            self.give_both_random_health()
+        
+        # is this set over?
+        if self.chamber_is_empty():
+            # reload
+            self.load_chamber()
+            
+            # player always gets first turn
+            self.whose_turn_id = self.player_id
     
     # if it's the dealer's turn, run the dealer ai until the dealer finishes his turn.
     def dealer_ai_turn(self):
@@ -189,27 +252,30 @@ class BuckshotRun():
             self.dealer.take_turn(self)
         
     def is_over(self):
-        return False
+        return self.game_over
 
 def main(argc, argv):
     run = BuckshotRun()
     
     while not run.is_over():
         print(run.chamber)
-        print(run.player.health)
-        print(run.dealer.health)
-        print(run.whose_turn_id)
+        print("round " + str(run.current_round))
+        print("player has won: " + str(run.matches_won) + " matches")
+        print("player health: " + str(run.player.health))
+        print("dealer health: " + str(run.dealer.health))
         
         if run.is_player_turn():
             print("taking player turn")
-            run.shoot(bullet_is_blank(run.peek_next_bullet()))
+            # run.shoot(bullet_is_blank(run.peek_next_bullet()))
+            run.shoot(bool(random.randint(0, 1)))
         else:
             print("taking dealer turn")
             run.dealer_ai_turn()
         
-        input("enter to conitnue...")
+        input("enter to continue...")
         print("")
-        
+    
+    print("Game over!")
 
 if __name__ == "__main__":
     main(len(sys.argv), sys.argv)
