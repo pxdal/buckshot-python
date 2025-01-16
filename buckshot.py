@@ -28,6 +28,25 @@ max_items = 8
 base_live_damage = 1
 sawedoff_live_damage = 2
 
+## item behaviors ##
+# all item behaviors require a user and the opposite player.
+# some items require additional input from the user.  not sure what to do about that yet.
+
+def knife_behavior(run, user, opposite):
+    run.is_sawed_off = True
+
+def cigarretes_behavior(run, user, opposite):
+    user.give_health(1)
+
+# item settings #
+item_behaviors = {
+    "knife": knife_behavior,
+    "cigarretes": cigarretes_behavior
+}
+
+item_names = self.item_behaviors.keys()
+
+
 ## utility methods ##
 
 def bullet_is_live(bullet):
@@ -61,11 +80,36 @@ def get_random_health():
     
 ## classes ##
 
+# player inventory
+class Inventory():
+    
+    # TODO: how the game determines what items you get is not as simple as just uniform randomness.
+    @staticmethod
+    def get_random_items(self, num):
+        return
+    
+    def __init__(self):
+        self.inventory = dict()
+        
+        # initialize counts
+        for item_name in item_names:
+            self.inventory[item_name] = 0
+    
+    def __contains__(self, item_name):
+        return self.inventory[item_name] > 0
+    
+    def use(self, item_name):
+        if not item_name in self:
+            raise Exception(item_name + " is not in inventory")
+        
+        self.inventory[item_name] -= 1
+
 # a participant in the game.  there are only two, the dealer and the player, but both inherit from this for shared behavior (such as health, items, etc.)
 class Participant():
-    def __init__(self):
+    def __init__(self, name):
+        self.name = name
         self.health = 0
-        self.items = []
+        self.inventory = Inventory()
         
         self.current_max_health = 0
     
@@ -98,7 +142,7 @@ class Participant():
 # participant with some real authentic dealer ai
 class Dealer(Participant):
     def __init__(self):
-        super().__init__()
+        super().__init__("Dealer")
     
     def take_turn(self, run):
         run.shoot(bool(random.randint(0, 1)))
@@ -110,7 +154,7 @@ class BuckshotRun():
     dealer_id = 1
     
     def __init__(self):
-        self.player = Participant()
+        self.player = Participant("Player")
         self.dealer = Dealer()
         
         # initial health
@@ -139,14 +183,6 @@ class BuckshotRun():
         
         # is the end of the barrel currently sawed off?
         self.is_sawed_off = False
-        
-        # item settings #
-        self.item_behaviors = {
-            "knife": self.knife_behavior,
-            "cigarretes": self.cigarretes_behavior
-        }
-        
-        self.item_names = self.item_behaviors.keys()
     
     # check integer ids
     def is_player(self, int_id):
@@ -233,7 +269,7 @@ class BuckshotRun():
             # use item
             self.get_item_behavior(item_name)(user, opposite)
         else:
-            raise Exception(item_name + " isn't in the user's inventory.")
+            raise Exception(item_name + " isn't in " + user.name + "'s inventory.")
     
     # whomever has this turn fires the gun.  because shooting the gun tends to be the last action before switching turns, sets, etc., this also handles most of the state transition logic
     def shoot(self, shooting_self):
@@ -243,14 +279,14 @@ class BuckshotRun():
         shooter, opposite = self.whose_turn()
         
         if not shooting_self:
-            print("someone shot someone else")
+            print(shooter.name + " shot " + opposite.name)
             
             opposite.take_damage(damage)
             
             if not self.is_handcuffed(opposite, uncuff=True):
                 self.swap_turn()
         else:
-            print("someone shot themselves")
+            print(shooter.name + " shot themselves")
             
             shooter.take_damage(damage)
             
@@ -306,15 +342,12 @@ class BuckshotRun():
     def get_item_behavior(self, item_name):
         return self.item_behaviors[item_name]
     
-    ## item behaviors ##
-    # all item behaviors require a user and the opposite player.  it's kinda sketchy, but whatever.
-    # some items require additional input from the user.
-    
-    def knife_behavior(self, user, opposite):
-        self.is_sawed_off = True
-    
-    def cigarretes_behavior(self, user, opposite):
-        user.give_health(1)
+    # TODO: the rules for this are actually rather specific.  for now, they've been made a lot simpler
+    def get_random_item_sequence(self):
+        min_items = 2
+        max_items = 6
+        
+        item_counts = dict()
 
 def main(argc, argv):
     run = BuckshotRun()
