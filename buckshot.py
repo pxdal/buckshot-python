@@ -541,7 +541,8 @@ def main(argc, argv):
                             print("num blank: " + str(run.num_blank()))
                         
                         print("known sequence: "  + str(run.player.known_sequence))
-        
+                    
+                    print("player items: " + str(run.player.inventory))
                 except NoItemException as e:
                     print(e)
                 except InvalidItemException as e:
