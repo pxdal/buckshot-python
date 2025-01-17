@@ -69,6 +69,13 @@ def phone_behavior(run, user, opposite):
 
 def beer_behavior(run, user, opposite):
     run.pop_next_bullet()
+    
+    # run cleanup if chamber is empty
+    if run.chamber_is_empty():
+        run.on_set_end()
+        
+        # basically just indicate that the turn is over now
+        raise RoundResetException()
 
 def handcuffs_behavior(run, user, opposite):
     # can't handcuff twice
@@ -146,10 +153,17 @@ def get_random_health():
 ## classes ##
 
 # just wrapper classes for exception to give these special names
+
+# item isn't available
 class NoItemException(Exception):
     pass
 
+# bad item name/usage
 class InvalidItemException(Exception):
+    pass
+
+# round is getting reset
+class RoundResetException(Exception):
     pass
 
 # player inventory
@@ -210,9 +224,12 @@ class Inventory():
         if not item_name in all_item_names:
             raise InvalidItemException("Invalid item " + item_name)
         
-        if self.max_items != None and self.num_items() >= self.max_items:
-            # TODO: more than silent fail?
-            return
+        if self.max_items != None and self.num_items()+count >= self.max_items:
+            count = self.max_items - self.num_items()
+            
+            if count == 0:
+                # TODO: more than silent fail?
+                return
             
         self.inventory[item_name] += count
         
@@ -501,6 +518,11 @@ class BuckshotRun():
         return bullet
     
     def on_set_end(self):
+        # reset game state as needed
+        
+        # NOTE: we do this because we don't necessarily know that this was called after a shell was fired
+        self.is_sawed_off = False
+        
         # reload
         self.load_chamber()
         
@@ -574,6 +596,8 @@ def main(argc, argv):
         print("")
         
         if run.is_player_turn():
+            dont_shoot = False
+            
             while True:
                 use_item = get_user_input("use an item?  enter name or press enter for no")
                 
@@ -614,8 +638,12 @@ def main(argc, argv):
                     print(e)
                 except InvalidItemException as e:
                     print(e)
+                except RoundResetException as e:
+                    # skip item usage and gunshot
+                    dont_shoot = True
+                    break
 
-            while True:
+            while not dont_shoot:
                 who_to_shoot = get_user_input("who to shoot?  type \"dealer\" or \"self\"")
                 
                 if who_to_shoot == "dealer":
@@ -636,10 +664,11 @@ def main(argc, argv):
         
         fired = run.get_last_shell_fired()
         
-        if bullet_is_live(fired):
-            print("shell was live")
-        else:
-            print("shell was blank")
+        if not dont_shoot:
+            if bullet_is_live(fired):
+                print("shell was live")
+            else:
+                print("shell was blank")
         
         input("enter to continue...")
         print("\n")
