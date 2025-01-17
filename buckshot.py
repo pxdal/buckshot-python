@@ -38,7 +38,7 @@ sawedoff_live_damage = 2
 def knife_behavior(run, user, opposite):
     run.is_sawed_off = True
 
-def cigarretes_behavior(run, user, opposite):
+def cigs_behavior(run, user, opposite):
     user.give_health(1)
 
 def medicine_behavior(run, user, opposite):
@@ -59,7 +59,7 @@ def inverter_behavior(run, user, opposite):
 # item settings #
 all_item_behaviors = {
     "knife": knife_behavior,
-    "cigarretes": cigarretes_behavior,
+    "cigs": cigs_behavior,
     "medicine": medicine_behavior,
     "magnifier": magnifier_behavior,
     "inverter": inverter_behavior
@@ -226,6 +226,9 @@ class Participant():
         
     def has_item(self, name):
         return name in self.inventory
+    
+    def use_item(self, name):
+        self.inventory.use(name)
 
 # participant with some real authentic dealer ai
 class Dealer(Participant):
@@ -270,6 +273,9 @@ class BuckshotRun():
         
         # is the end of the barrel currently sawed off?
         self.is_sawed_off = False
+        
+        # the polarity of the last shell fired (including if it was inverted) or None if none have been fired yet
+        self.last_shell_fired = None
         
         # initialize game
         self.on_set_end()
@@ -318,6 +324,9 @@ class BuckshotRun():
     
     def load_chamber(self):
         self.chamber = get_random_chamber_sequence()
+    
+    def get_last_shell_fired(self):
+        return self.last_shell_fired
     
     def is_match_over(self):
         return self.current_round > rounds_per_match
@@ -369,6 +378,7 @@ class BuckshotRun():
         
         if user.has_item(item_name):
             # use item
+            user.use_item(item_name)
             self.call_item_behavior(item_name, user, opposite)
         else:
             raise NoItemException(item_name + " isn't in " + user.name + "'s inventory.")
@@ -416,6 +426,8 @@ class BuckshotRun():
         # is this set over?
         if self.chamber_is_empty():
             self.on_set_end()
+        
+        self.last_shell_fired = bullet
         
         # return fired shell
         return bullet
@@ -490,8 +502,6 @@ def main(argc, argv):
         print("known sequence: "  + str(run.player.known_sequence))
         print("")
         
-        next_shell = run.peek_next_bullet()
-        
         if run.is_player_turn():
             while True:
                 use_item = input("use an item?  enter name or press enter for no: ").strip().lower()
@@ -502,10 +512,12 @@ def main(argc, argv):
                 try:
                     run.use_item(use_item)
                     
-                    use_another = input("use another? y/n: ")
+                    print("used " + use_item)
                     
-                    if use_another.lower() != "y":
-                        break
+                    if use_item == "cigs" or use_item == "medicine":
+                        print("player health: " + str(run.player.health))
+                    elif use_item == "magnifier":
+                        print("known sequence: "  + str(run.player.known_sequence))
                 except NoItemException as e:
                     print(e)
                 except InvalidItemException as e:
@@ -530,7 +542,9 @@ def main(argc, argv):
             print("taking dealer turn")
             run.dealer_ai_turn()
         
-        if bullet_is_live(next_shell):
+        fired = run.get_last_shell_fired()
+        
+        if bullet_is_live(fired):
             print("shell was live")
         else:
             print("shell was blank")
