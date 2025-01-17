@@ -55,6 +55,20 @@ def magnifier_behavior(run, user, opposite):
 def inverter_behavior(run, user, opposite):
     run.invert_next_bullet()
 
+def phone_behavior(run, user, opposite):
+    num_bullets_left = run.num_bullets_left()
+    
+    if num_bullets_left < 2:
+        # cell phone says "how unfortunate..." for less than two rounds
+        return
+    
+    # pick a random bullet
+    reveal_pos = random.randint(1, num_bullets_left-1)
+    
+    user.known_sequence[reveal_pos] = run.chamber[reveal_pos]
+
+def beer_behavior(run, user, opposite):
+    run.pop_next_bullet()
 
 # item settings #
 all_item_behaviors = {
@@ -62,7 +76,9 @@ all_item_behaviors = {
     "cigs": cigs_behavior,
     "medicine": medicine_behavior,
     "magnifier": magnifier_behavior,
-    "inverter": inverter_behavior
+    "inverter": inverter_behavior,
+    "phone": phone_behavior,
+    "beer": beer_behavior
 }
 
 all_item_names = list(all_item_behaviors.keys())
@@ -301,13 +317,19 @@ class BuckshotRun():
     
     def num_blank(self):
         return self.chamber.count(blank_token)
-        
+    
+    def num_bullets_left(self):
+        return len(self.chamber)
+    
     # returns the next bullet without removing it from the chamber
     def peek_next_bullet(self):
         return self.chamber[0]
     
     # pops the bullet from the front and returns it
     def pop_next_bullet(self):
+        self.player.pop_known_sequence()
+        self.dealer.pop_known_sequence()
+        
         return self.chamber.pop(0)
     
     def invert_next_bullet(self):
@@ -387,9 +409,6 @@ class BuckshotRun():
     def shoot(self, shooting_self):
         bullet = self.pop_next_bullet()
         damage = self.get_bullet_current_damage(bullet)
-        
-        self.player.pop_known_sequence()
-        self.dealer.pop_known_sequence()
         
         shooter, opposite = self.whose_turn()
         
@@ -516,8 +535,13 @@ def main(argc, argv):
                     
                     if use_item == "cigs" or use_item == "medicine":
                         print("player health: " + str(run.player.health))
-                    elif use_item == "magnifier":
+                    elif use_item == "magnifier" or use_item == "phone" or use_item == "beer":
+                        if use_item == "beer":
+                            print("num live: " + str(run.num_live()))
+                            print("num blank: " + str(run.num_blank()))
+                        
                         print("known sequence: "  + str(run.player.known_sequence))
+        
                 except NoItemException as e:
                     print(e)
                 except InvalidItemException as e:
