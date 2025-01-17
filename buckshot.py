@@ -23,7 +23,10 @@ max_shells_per_set = 8
 min_health = 2
 max_health = 4
 
-max_items = 8
+max_items_total = 8
+
+min_items_per_set = 1
+max_items_per_set = 5
 
 base_live_damage = 1
 sawedoff_live_damage = 2
@@ -38,13 +41,31 @@ def knife_behavior(run, user, opposite):
 def cigarretes_behavior(run, user, opposite):
     user.give_health(1)
 
+def medicine_behavior(run, user, opposite):
+    coin_flip = random.randint(0, 1) == 0
+    
+    if coin_flip:
+        user.give_health(2)
+    else:
+        user.take_damage(1)
+
+def magnifier_behavior(run, user, opposite):
+    user.known_sequence[0] = run.peek_next_bullet()
+
+def inverter_behavior(run, user, opposite):
+    run.invert_next_bullet()
+
+
 # item settings #
-item_behaviors = {
+all_item_behaviors = {
     "knife": knife_behavior,
-    "cigarretes": cigarretes_behavior
+    "cigarretes": cigarretes_behavior,
+    "medicine": medicine_behavior,
+    "magnifier": magnifier_behavior,
+    "inverter": inverter_behavior
 }
 
-item_names = self.item_behaviors.keys()
+all_item_names = list(all_item_behaviors.keys())
 
 
 ## utility methods ##
@@ -80,27 +101,83 @@ def get_random_health():
     
 ## classes ##
 
+class NoItemException(Exception):
+    pass
+
+class InvalidItemException(Exception):
+    pass
+
 # player inventory
 class Inventory():
-    
     # TODO: how the game determines what items you get is not as simple as just uniform randomness.
+    # generate an inventory of num random items.
+    # FUTURE BEHAVIOR: limits is also an inventory of items.  it gives limits to the number of items that can be in the random inventory.  if limits is None, then no limits are applied.
     @staticmethod
-    def get_random_items(self, num):
-        return
+    def get_random_items(num, limits=None):
+        random_inventory = Inventory()
+        
+        for i in range(num):
+            # pick random item
+            random_item = random.choice(all_item_names)
+            
+            random_inventory.add_item(random_item)
+        
+        return random_inventory
     
-    def __init__(self):
+    def __init__(self, max_items=None):
         self.inventory = dict()
+        self.max_items = max_items
         
         # initialize counts
-        for item_name in item_names:
-            self.inventory[item_name] = 0
+        self.reset()
     
     def __contains__(self, item_name):
+        if not item_name in all_item_names:
+            raise InvalidItemException("Invalid item " + item_name)
+        
         return self.inventory[item_name] > 0
     
+    def __str__(self):
+        return str(self.inventory)
+    
+    def __len__(self):
+        return sum(self.inventory.values())
+    
+    def reset(self):
+        self.inventory = dict()
+        
+        for item_name in all_item_names:
+            self.inventory[item_name] = 0
+        
+    def num_items(self):
+        return len(self)
+        
+    def as_dict(self):
+        return self.inventory
+    
+    def item_count(self, item_name):
+        if not item_name in all_item_names:
+            raise InvalidItemException("Invalid item " + item_name)
+        
+        return self.inventory[item_name]
+    
+    def add_item(self, item_name, count=1):
+        if not item_name in all_item_names:
+            raise InvalidItemException("Invalid item " + item_name)
+        
+        if self.max_items != None and self.num_items() >= self.max_items:
+            # TODO: more than silent fail?
+            return
+            
+        self.inventory[item_name] += count
+        
+    def add_inventory(self, inventory):
+        for item_name in inventory.as_dict().keys():
+            self.add_item(item_name, count=inventory.item_count(item_name))
+        
     def use(self, item_name):
         if not item_name in self:
-            raise Exception(item_name + " is not in inventory")
+            raise InvalidItemException(item_name + " is not in inventory")
         
         self.inventory[item_name] -= 1
 
@@ -109,9 +186,24 @@ class Participant():
     def __init__(self, name):
         self.name = name
         self.health = 0
-        self.inventory = Inventory()
+        self.inventory = Inventory(max_items_total)
+        
+        # sequence containing rounds that the participant knows through any items that reveal shells.
+        # note that this doesn't include any shells that may be implicitly known, as in through shell counting or otherwise
+        # known shells will be either the live or blank token, or None if the shell isn't known.
+        # this represents the number of shells left in the chamber, not the number of shells at the start.  the first item always corresponds to the next shell
+        self.known_sequence = []
         
         self.current_max_health = 0
+    
+    def reset_known_sequence(self, num_shells):
+        self.known_sequence = [None] * num_shells
+    
+    def pop_known_sequence(self):
+        return self.known_sequence.pop(0)
+    
+    def peek_known_sequence(self, i):
+        return self.known_sequence[i]
     
     def set_health(self, new_health):
         self.health = new_health
@@ -126,18 +218,14 @@ class Participant():
     def is_dead(self):
         return self.health < 1
     
-    def give_items(self, items):
-        self.items += items
-        
-        # cap items
-        # this is authentic, as buckshot roulette won't let you keep any items past your limit and instead makes you put them back in the box
-        self.items = self.items[:max_items]
+    def give_items(self, inventory_of_items):
+        self.inventory.add_inventory(inventory_of_items)
     
     def reset_items(self):
-        self.items = []
+        self.inventory.reset()
         
     def has_item(self, name):
-        return name in self.items
+        return name in self.inventory
 
 # participant with some real authentic dealer ai
 class Dealer(Participant):
@@ -162,7 +250,6 @@ class BuckshotRun():
         
         # the current sequence of bullets in the chamber
         self.chamber = []
-        self.load_chamber()
         
         # matches won by the player (if the dealer wins any, it's just game over)
         self.matches_won = 0
@@ -183,6 +270,9 @@ class BuckshotRun():
         
         # is the end of the barrel currently sawed off?
         self.is_sawed_off = False
+        
+        # initialize game
+        self.on_set_end()
     
     # check integer ids
     def is_player(self, int_id):
@@ -200,6 +290,12 @@ class BuckshotRun():
         elif participant == self.dealer:
             return self.dealer_id
     
+    def num_live(self):
+        return self.chamber.count(live_token)
+    
+    def num_blank(self):
+        return self.chamber.count(blank_token)
+        
     # returns the next bullet without removing it from the chamber
     def peek_next_bullet(self):
         return self.chamber[0]
@@ -208,6 +304,12 @@ class BuckshotRun():
     def pop_next_bullet(self):
         return self.chamber.pop(0)
     
+    def invert_next_bullet(self):
+        if self.chamber[0] == live_token:
+            self.chamber[0] = blank_token
+        else:
+            self.chamber[0] = live_token
+        
     def chamber_is_empty(self):
         return len(self.chamber) == 0
     
@@ -267,14 +369,17 @@ class BuckshotRun():
         
         if user.has_item(item_name):
             # use item
-            self.get_item_behavior(item_name)(user, opposite)
+            self.call_item_behavior(item_name, user, opposite)
         else:
-            raise Exception(item_name + " isn't in " + user.name + "'s inventory.")
+            raise NoItemException(item_name + " isn't in " + user.name + "'s inventory.")
     
     # whomever has this turn fires the gun.  because shooting the gun tends to be the last action before switching turns, sets, etc., this also handles most of the state transition logic
     def shoot(self, shooting_self):
         bullet = self.pop_next_bullet()
         damage = self.get_bullet_current_damage(bullet)
+        
+        self.player.pop_known_sequence()
+        self.dealer.pop_known_sequence()
         
         shooter, opposite = self.whose_turn()
         
@@ -306,31 +411,51 @@ class BuckshotRun():
             self.game_over = True
             return
         elif self.dealer.is_dead():
-            # advance to next round
-            self.current_round += 1
-            
-            if self.is_match_over():
-                self.matches_won += 1
-                
-                self.current_round = 1
-            else:
-                # NOTE: this is intended behavior. the items don't reset between the third round of a match and the first round of the following match in the game
-                self.player.reset_items()
-                self.dealer.reset_items()
-            
-            self.give_both_random_health()
-            self.empty_chamber()
+            self.on_round_end()
         
         # is this set over?
         if self.chamber_is_empty():
-            # reload
-            self.load_chamber()
-            
-            # player always gets first turn
-            self.whose_turn_id = self.player_id
-            
-            # give each items
+            self.on_set_end()
+        
+        # return fired shell
+        return bullet
     
+    def on_set_end(self):
+        # reload
+        self.load_chamber()
+        
+        # participants don't know new sequence
+        self.player.reset_known_sequence(len(self.chamber))
+        self.dealer.reset_known_sequence(len(self.chamber))
+        
+        # player always gets first turn
+        self.whose_turn_id = self.player_id
+        
+        # give each items
+        num_items = random.randint(min_items_per_set, max_items_per_set)
+        
+        player_items = Inventory.get_random_items(num_items)
+        dealer_items = Inventory.get_random_items(num_items)
+        
+        self.player.give_items(player_items)
+        self.dealer.give_items(dealer_items)
+        
+    def on_round_end(self):
+        # advance to next round
+        self.current_round += 1
+        
+        if self.is_match_over():
+            self.matches_won += 1
+            
+            self.current_round = 1
+        else:
+            # NOTE: this is intended behavior. the items don't reset between the third round of a match and the first round of the following match in the game
+            self.player.reset_items()
+            self.dealer.reset_items()
+        
+        self.give_both_random_health()
+        self.empty_chamber()
+        
     # if it's the dealer's turn, run the dealer ai until the dealer finishes his turn.
     def dealer_ai_turn(self):
         if not self.is_player_turn():
@@ -339,36 +464,79 @@ class BuckshotRun():
     def is_over(self):
         return self.game_over
     
-    def get_item_behavior(self, item_name):
-        return self.item_behaviors[item_name]
-    
-    # TODO: the rules for this are actually rather specific.  for now, they've been made a lot simpler
-    def get_random_item_sequence(self):
-        min_items = 2
-        max_items = 6
-        
-        item_counts = dict()
+    def call_item_behavior(self, item_name, user, opposite):
+        return all_item_behaviors[item_name](self, user, opposite)
 
+# simple wrapper around single run.  mostly for debugging, not really intended to be fun gameplay.
 def main(argc, argv):
     run = BuckshotRun()
     
     while not run.is_over():
-        print(run.chamber)
+        # print(run.chamber)
         print("round " + str(run.current_round))
         print("player has won: " + str(run.matches_won) + " matches")
+        print("")
+        
         print("player health: " + str(run.player.health))
         print("dealer health: " + str(run.dealer.health))
+        print("")
+        
+        print("player items: " + str(run.player.inventory))
+        print("dealer items: " + str(run.dealer.inventory))
+        print("")
+        
+        print("num live: " + str(run.num_live()))
+        print("num blank: " + str(run.num_blank()))
+        print("known sequence: "  + str(run.player.known_sequence))
+        print("")
+        
+        next_shell = run.peek_next_bullet()
         
         if run.is_player_turn():
-            print("taking player turn")
-            run.shoot(bullet_is_blank(run.peek_next_bullet()))
+            while True:
+                use_item = input("use an item?  enter name or press enter for no: ").strip().lower()
+                
+                if use_item == "":
+                    break
+                
+                try:
+                    run.use_item(use_item)
+                    
+                    use_another = input("use another? y/n: ")
+                    
+                    if use_another.lower() != "y":
+                        break
+                except NoItemException as e:
+                    print(e)
+                except InvalidItemException as e:
+                    print(e)
+
+            while True:
+                who_to_shoot = input("who to shoot?  type \"dealer\" or \"self\": ").strip().lower()
+                
+                if who_to_shoot == "dealer":
+                    fired = run.shoot(shooting_self=False)
+                    break
+                elif who_to_shoot == "self":
+                    fired = run.shoot(shooting_self=True)
+                    break
+                else:
+                    print("pick!")
+            
+            # print("taking player turn")
+            # run.shoot(bullet_is_blank(run.peek_next_bullet()))
             # run.shoot(bool(random.randint(0, 1)))
         else:
             print("taking dealer turn")
             run.dealer_ai_turn()
         
+        if bullet_is_live(next_shell):
+            print("shell was live")
+        else:
+            print("shell was blank")
+        
         input("enter to continue...")
-        print("")
+        print("\n")
     
     print("Game over!")
 
