@@ -70,6 +70,32 @@ def phone_behavior(run, user, opposite):
 def beer_behavior(run, user, opposite):
     run.pop_next_bullet()
 
+def handcuffs_behavior(run, user, opposite):
+    # can't handcuff twice
+    if run.is_handcuffed(opposite):
+        raise InvalidItemException("can't handcuff twice")
+    
+    run.handcuff_participant(opposite)
+    
+def adrenaline_behavior(run, user, opposite):
+    # steal item stored in run    
+    steal_item = run.desired_steal_item
+    
+    # steal item from opposite
+    try:
+        opposite.inventory.use(steal_item)
+    except NoItemException as e:
+        raise NoItemException("opposite player doesn't have " + steal_item)
+    
+    # give item to user
+    user.inventory.add_item(steal_item)
+    
+    # use item immediately
+    run.use_item(steal_item)
+    
+    # reset steal item
+    run.desired_steal_item = None    
+    
 # item settings #
 all_item_behaviors = {
     "knife": knife_behavior,
@@ -78,7 +104,9 @@ all_item_behaviors = {
     "magnifier": magnifier_behavior,
     "inverter": inverter_behavior,
     "phone": phone_behavior,
-    "beer": beer_behavior
+    "beer": beer_behavior,
+    "adrenaline": adrenaline_behavior,
+    "handcuffs": handcuffs_behavior
 }
 
 all_item_names = list(all_item_behaviors.keys())
@@ -117,6 +145,7 @@ def get_random_health():
     
 ## classes ##
 
+# just wrapper classes for exception to give these special names
 class NoItemException(Exception):
     pass
 
@@ -193,7 +222,7 @@ class Inventory():
         
     def use(self, item_name):
         if not item_name in self:
-            raise InvalidItemException(item_name + " is not in inventory")
+            raise NoItemException(item_name + " is not in inventory")
         
         self.inventory[item_name] -= 1
 
@@ -293,6 +322,9 @@ class BuckshotRun():
         # the polarity of the last shell fired (including if it was inverted) or None if none have been fired yet
         self.last_shell_fired = None
         
+        # the desired item to steal from opposite of whomever is using adrenaline
+        self.desired_steal_item = None
+        
         # initialize game
         self.on_set_end()
     
@@ -384,6 +416,9 @@ class BuckshotRun():
     def is_player_turn(self):
         return self.is_player(self.whose_turn_id)
     
+    def handcuff_participant(self, participant):
+        self.who_handcuffed_id = self.get_id(participant)
+    
     # check if the participant is handcuffed.  optionally uncuffs the participant if applicable.
     # note that this function will still return true even if the participant is uncuffed.  this is intended to be used such that the participant gets a turn afterward (where applicable)
     def is_handcuffed(self, participant, uncuff=False):
@@ -396,6 +431,9 @@ class BuckshotRun():
     
     # whomever has this turn uses the named item, or throws an exception if that item isn't in the participant's inventory.
     def use_item(self, item_name):
+        if item_name == "adrenaline" and self.desired_steal_item is None:
+            raise InvalidItemException("adrenaline was used but no steal item was set (are you using use_item instead of use_adrenaline)?")
+        
         user, opposite = self.whose_turn()
         
         if user.has_item(item_name):
@@ -405,6 +443,17 @@ class BuckshotRun():
         else:
             raise NoItemException(item_name + " isn't in " + user.name + "'s inventory.")
     
+    # whomever has this turn uses their adrenaline to steal the provided item from the opposite participant and use it immediately.
+    def use_adrenaline(self, steal_item_name):
+        # can't steal more adrenaline
+        if steal_item_name == "adrenaline":
+            raise InvalidItemException("you can't use adrenaline to take adrenaline")
+        
+        # set steal item
+        self.desired_steal_item = steal_item_name
+        
+        self.use_item("adrenaline")
+        
     # whomever has this turn fires the gun.  because shooting the gun tends to be the last action before switching turns, sets, etc., this also handles most of the state transition logic
     def shoot(self, shooting_self):
         bullet = self.pop_next_bullet()
@@ -500,6 +549,9 @@ class BuckshotRun():
 
 # simple wrapper around single run.  mostly for debugging, not really intended to be fun gameplay.
 def main(argc, argv):
+    def get_user_input(prompt):
+        return input(prompt + ": ").strip().lower()
+    
     run = BuckshotRun()
     
     while not run.is_over():
@@ -523,15 +575,27 @@ def main(argc, argv):
         
         if run.is_player_turn():
             while True:
-                use_item = input("use an item?  enter name or press enter for no: ").strip().lower()
+                use_item = get_user_input("use an item?  enter name or press enter for no")
                 
                 if use_item == "":
                     break
                 
                 try:
-                    run.use_item(use_item)
+                    used_adrenaline = False
                     
-                    print("used " + use_item)
+                    if use_item == "adrenaline":
+                        # run special adrenaline behavior
+                        use_item = get_user_input("what are you stealing?")
+                        
+                        run.use_adrenaline(use_item)
+                        
+                        used_adrenaline = True
+                        
+                        print("used adrenaline to steal " + use_item)
+                    else:
+                        run.use_item(use_item)
+                        
+                        print("used " + use_item)
                     
                     if use_item == "cigs" or use_item == "medicine":
                         print("player health: " + str(run.player.health))
@@ -543,13 +607,16 @@ def main(argc, argv):
                         print("known sequence: "  + str(run.player.known_sequence))
                     
                     print("player items: " + str(run.player.inventory))
+                    
+                    if used_adrenaline:
+                        print("dealer items: " + str(run.dealer.inventory))
                 except NoItemException as e:
                     print(e)
                 except InvalidItemException as e:
                     print(e)
 
             while True:
-                who_to_shoot = input("who to shoot?  type \"dealer\" or \"self\": ").strip().lower()
+                who_to_shoot = get_user_input("who to shoot?  type \"dealer\" or \"self\"")
                 
                 if who_to_shoot == "dealer":
                     fired = run.shoot(shooting_self=False)
