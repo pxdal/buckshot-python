@@ -65,6 +65,11 @@ def phone_behavior(run, user, opposite):
     # pick a random bullet
     reveal_pos = random.randint(1, num_bullets_left-1)
     
+    # NOTE: this is authentic behavior.  the burner phone is deliberately coded to not tell the player (and only the player) the location of the 8th shell.
+    if user is run.player:
+        if reveal_pos == 7:
+            reveal_pos -= 1
+    
     user.known_sequence[reveal_pos] = run.chamber[reveal_pos]
 
 def beer_behavior(run, user, opposite):
