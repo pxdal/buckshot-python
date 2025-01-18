@@ -25,7 +25,7 @@ max_health = 4
 
 max_items_total = 8
 
-min_items_per_set = 1
+min_items_per_set = 2
 max_items_per_set = 5
 
 base_live_damage = 1
