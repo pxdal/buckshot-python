@@ -88,25 +88,48 @@ def handcuffs_behavior(run, user, opposite):
         raise InvalidItemException("can't handcuff twice")
     
     run.handcuff_participant(opposite)
-    
+
+# NOTE: I've intentionally programmed this to be bugged to be as authentic to the true buckshot roulette as possible.  BR has a bug in its item counting that allows the player and the dealer to take above the limit under certain conditions involving the adrenaline.
+    # the game keeps track of limits by keeping a count for each item for how many of that item the player has.  the counter changes under the following conditions:
+        # 1. all counters reset to 0 when items are reset
+        # 2. the counter for a particular item is incremented when that item is taken out of the item box by the player.
+        # 3. the counter for a particular item is decremented when that item is used by the player.
+    # the game enforces item limits by checking if the item counter is the same as that item's limit before a new item is drawn from the box.  if it is, that item isn't able to be drawn.
+    # the problem is that the game doesn't perfectly differentiate between player items and dealer items when using adrenaline, and will decrement the player counter for an item even if the player actually stole the item from the dealer.  take the following example with the cigarettes:
+        # the round starts and items are reset, setting the player's cigarette counter to 0.
+        # the player pulls an adrenaline and a beer from the box, so the cigarette counter stays at 0.  the dealer pulls cigarettes and handcuffs.
+        # the player uses adrenaline to steal the dealer's cigarettes.  the player's cigarette counter is erroneously decremented to -1.
+        # the set ends and the player draws new items.  before the first draw, the game checks the item limits.  the cigarette limit is 1 and -1 < 1, so cigarettes can be pulled.
+        # the player pulls cigarretes, and the counter increments to 0.  0 < 1, so cigarettes can still be pulled.
+        # the player pulls more cigarettes, and the counter increments to 1.  1 == 1, so cigarettes aren't able to be drawn again until the player uses cigarettes.
+    # in that example, we see that the player is able to obtain 2 cigarettes despite the limit being 1.  practically speaking, this happens very rarely in games because the counters are reset when items are reset at the end of every round, but it happens often enough that I've mimicked that behavior for authenticity.
+    # note that the same is true of the dealer, though the logic is a bit different because how the dealer uses items is very different from how the player does.
+    # also note that the count still does decrement correctly for the person being stolen from.  using an adrenaline to steal the dealer's cigarettes in the previous example actually decreases the counter for both the dealer *and* the player.  your limit can never be decreased, only increased.
 def adrenaline_behavior(run, user, opposite):
-    # steal item stored in run    
+    # steal item stored in run
     steal_item = run.desired_steal_item
+    
+    # don't allow adrenaline
+    if steal_item == "adrenaline":
+        raise InvalidItemException("can't steal adrenaline")
     
     # steal item from opposite
     try:
-        opposite.inventory.use(steal_item)
+        # decrement opposite counter
+        opposite.consume_item(steal_item)
     except NoItemException as e:
         raise NoItemException("opposite player doesn't have " + steal_item)
     
     # give item to user
+    # circumvents user counter
     user.inventory.add_item(steal_item)
     
     # use item immediately
+    # decrement user counter
     run.use_item(steal_item)
     
     # reset steal item
-    run.desired_steal_item = None    
+    run.desired_steal_item = None
     
 # item settings #
 all_item_behaviors = {
@@ -123,6 +146,18 @@ all_item_behaviors = {
 
 all_item_names = list(all_item_behaviors.keys())
 
+# set default limits
+default_item_limits = {
+    "knife": 3,
+    "cigs": 1,
+    "medicine": 1,
+    "magnifier": 3,
+    "inverter": 8,
+    "phone": 1,
+    "beer": 2,
+    "adrenaline": 2,
+    "handcuffs": 1
+}
 
 ## utility methods ##
 
@@ -147,6 +182,7 @@ def get_random_chamber_sequence():
     # arrange them in an array and shuffle
     sequence = [live_token] * num_live + [blank_token] * num_blank
     
+    # NOTE: this is technically not authentic behavior.  mike shuffles the order twice for some reason.
     random.shuffle(sequence)
     
     return sequence
@@ -173,18 +209,34 @@ class RoundResetException(Exception):
 
 # player inventory
 class Inventory():
-    # TODO: how the game determines what items you get is not as simple as just uniform randomness.
     # generate an inventory of num random items.
-    # FUTURE BEHAVIOR: limits is also an inventory of items.  it gives limits to the number of items that can be in the random inventory.  if limits is None, then no limits are applied.
+    # limits is also an inventory of items.  it gives limits to the number of items that can be in the random inventory.  if limits is None, then no limits are applied.
     @staticmethod
     def get_random_items(num, limits=None):
         random_inventory = Inventory()
         
+        pickable_items = all_item_names.copy()
+        
+        # remove any items that have a hard set 0 limits
+        if not limits is None:
+            for item_name in all_item_names:
+                if limits.item_count(item_name) == 0:
+                    pickable_items.remove(item_name)
+        
         for i in range(num):
+            # no items available
+            if len(pickable_items) < 1:
+                break
+            
             # pick random item
-            random_item = random.choice(all_item_names)
+            random_item = random.choice(pickable_items)
             
             random_inventory.add_item(random_item)
+            
+            # re-check available items to draw
+            if not limits is None:
+                if random_inventory.item_count(random_item) >= limits.item_count(random_item):
+                    pickable_items.remove(random_item)
         
         return random_inventory
     
@@ -242,11 +294,14 @@ class Inventory():
         for item_name in inventory.as_dict().keys():
             self.add_item(item_name, count=inventory.item_count(item_name))
         
-    def use(self, item_name):
+    def consume_item(self, item_name, count=1):
         if not item_name in self:
             raise NoItemException(item_name + " is not in inventory")
+
+        self.inventory[item_name] -= count
         
-        self.inventory[item_name] -= 1
+        # just use the remainder of our items if it exceeds the count we have
+        self.inventory[item_name] = max(self.inventory[item_name], 0)
 
 # a participant in the game.  there are only two, the dealer and the player, but both inherit from this for shared behavior (such as health, items, etc.)
 class Participant():
@@ -254,6 +309,11 @@ class Participant():
         self.name = name
         self.health = 0
         self.inventory = Inventory(max_items_total)
+        
+        # see get_participant_item_limits docs for why this exists.
+        self.item_counts_for_bugged_limits = dict()
+        
+        self.reset_items()
         
         # sequence containing rounds that the participant knows through any items that reveal shells.
         # note that this doesn't include any shells that may be implicitly known, as in through shell counting or otherwise
@@ -286,16 +346,46 @@ class Participant():
         return self.health < 1
     
     def give_items(self, inventory_of_items):
+        # increase counts appropriately
+        old_counts = dict()
+        
+        for item_name in self.inventory.as_dict():
+            old_counts[item_name] = self.inventory.item_count(item_name)
+        
         self.inventory.add_inventory(inventory_of_items)
+        
+        # this accounts for any partial counts from hitting the total max item count (not the individual item limits)
+        for item_name in self.inventory.as_dict():
+            self.item_counts_for_bugged_limits[item_name] += self.inventory.item_count(item_name) - old_counts[item_name]
     
     def reset_items(self):
         self.inventory.reset()
         
+        for item_name in all_item_names:
+            self.item_counts_for_bugged_limits[item_name] = 0
+        
     def has_item(self, name):
         return name in self.inventory
     
-    def use_item(self, name):
-        self.inventory.use(name)
+    def consume_item(self, name):
+        self.inventory.consume_item(name)
+        
+        # decrement count (won't get this far if we don't have an item because inventory will throw an exception)
+        self.item_counts_for_bugged_limits[name] -= 1
+    
+    # get an inventory containing this participant's current limits on each item based on the bugged item counts and the default limits
+    def get_limit_inventory(self):
+        limit_inventory = Inventory()
+        
+        for item_name in default_item_limits:
+            bugged_count = self.item_counts_for_bugged_limits[item_name]
+            default_limit = default_item_limits[item_name]
+            
+            current_limit = default_limit - bugged_count
+            
+            limit_inventory.add_item(item_name, count=current_limit)
+        
+        return limit_inventory
 
 # participant with some real authentic dealer ai
 class Dealer(Participant):
@@ -460,17 +550,13 @@ class BuckshotRun():
         
         if user.has_item(item_name):
             # use item
-            user.use_item(item_name)
+            user.consume_item(item_name)
             self.call_item_behavior(item_name, user, opposite)
         else:
             raise NoItemException(item_name + " isn't in " + user.name + "'s inventory.")
     
     # whomever has this turn uses their adrenaline to steal the provided item from the opposite participant and use it immediately.
     def use_adrenaline(self, steal_item_name):
-        # can't steal more adrenaline
-        if steal_item_name == "adrenaline":
-            raise InvalidItemException("you can't use adrenaline to take adrenaline")
-        
         # set steal item
         self.desired_steal_item = steal_item_name
         
@@ -502,6 +588,8 @@ class BuckshotRun():
         
         # reset game state as needed
         
+        self.last_shell_fired = bullet
+        
         # always resets
         self.is_sawed_off = False
         
@@ -516,8 +604,6 @@ class BuckshotRun():
         # is this set over?
         if self.chamber_is_empty():
             self.on_set_end()
-        
-        self.last_shell_fired = bullet
         
         # return fired shell
         return bullet
@@ -541,8 +627,12 @@ class BuckshotRun():
         # give each items
         num_items = random.randint(min_items_per_set, max_items_per_set)
         
-        player_items = Inventory.get_random_items(num_items)
-        dealer_items = Inventory.get_random_items(num_items)
+        # calculate limits
+        player_limit_inventory = self.player.get_limit_inventory()
+        dealer_limit_inventory = self.dealer.get_limit_inventory()
+        
+        player_items = Inventory.get_random_items(num_items, limits=player_limit_inventory)
+        dealer_items = Inventory.get_random_items(num_items, limits=dealer_limit_inventory)
         
         self.player.give_items(player_items)
         self.dealer.give_items(dealer_items)
@@ -580,6 +670,13 @@ def main(argc, argv):
         return input(prompt + ": ").strip().lower()
     
     run = BuckshotRun()
+    
+    # debugging lines for giving player items to test at start
+    # test_inventory = Inventory()
+    
+    # test_inventory.add_item("adrenaline")
+    
+    # run.player.give_items(test_inventory)
     
     while not run.is_over():
         # print(run.chamber)
@@ -626,6 +723,8 @@ def main(argc, argv):
                         
                         print("used " + use_item)
                     
+                    print("")
+                    
                     if use_item == "cigs" or use_item == "medicine":
                         print("player health: " + str(run.player.health))
                     elif use_item == "magnifier" or use_item == "phone" or use_item == "beer":
@@ -639,6 +738,8 @@ def main(argc, argv):
                     
                     if used_adrenaline:
                         print("dealer items: " + str(run.dealer.inventory))
+                    
+                    print("")
                 except NoItemException as e:
                     print(e)
                 except InvalidItemException as e:
