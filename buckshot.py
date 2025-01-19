@@ -310,8 +310,12 @@ class Inventory():
         
         count = min(count, self.item_count(item_name))
         
-        for i in range(count):
-            self.items.remove(item_name)
+        if count < 1:
+            while item_name in self.items:
+                self.items.remove(item_name)
+        else:
+            for i in range(count):
+                self.items.remove(item_name)
 
 # a participant in the game.  there are only two, the dealer and the player, but both inherit from this for shared behavior (such as health, items, etc.)
 class Participant():
@@ -629,6 +633,9 @@ class BuckshotRun():
         
         # game state settings #
         
+        # what set of the round we're on
+        self.current_set = 0
+        
         # will be set to true if the game is over for the player
         self.game_over = False
         
@@ -818,10 +825,10 @@ class BuckshotRun():
             return
         elif self.dealer.is_dead():
             self.on_round_end()
-        
-        # is this set over?
-        if self.chamber_is_empty():
-            self.on_set_end()
+        else:
+            # is this set over?
+            if self.chamber_is_empty():
+                self.on_set_end()
         
         # return fired shell
         return bullet
@@ -850,11 +857,18 @@ class BuckshotRun():
         player_limit_inventory = self.player.get_limit_inventory()
         dealer_limit_inventory = self.dealer.get_limit_inventory()
         
+        # don't allow knife on very first set if health is 2=
+        if self.current_set == 0 and self.player.current_max_health == 2:
+            player_limit_inventory.consume_item("knife", count=-1)
+            dealer_limit_inventory.consume_item("knife", count=-1)
+        
         player_items = Inventory.get_random_items(num_items, limits=player_limit_inventory)
         dealer_items = Inventory.get_random_items(num_items, limits=dealer_limit_inventory)
         
         self.player.give_items(player_items)
         self.dealer.give_items(dealer_items)
+        
+        self.current_set += 1
         
     def on_round_end(self):
         # advance to next round
@@ -870,6 +884,8 @@ class BuckshotRun():
             self.dealer.reset_items()
         
         self.give_both_random_health()
+        
+        self.current_set = 0
         
         self.on_set_end()
         
@@ -902,6 +918,7 @@ def main(argc, argv):
     while not run.is_over():
         # print(run.chamber)
         print("round " + str(run.current_round))
+        print("set " + str(run.current_set))
         print("player has won: " + str(run.matches_won) + " matches and " + str(run.rounds_won()) + " rounds")
         print("")
         
