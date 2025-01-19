@@ -250,7 +250,7 @@ class Inventory():
         if not item_name in all_item_names:
             raise InvalidItemException("Invalid item " + item_name)
         
-    def __contains__(self, item_name):
+    def has_item(self, item_name):
         self.check_item_validity(item_name)
         
         return item_name in self.items
@@ -291,7 +291,7 @@ class Inventory():
             self.add_item(item_name)
     
     def consume_item(self, item_name, count=1):
-        if not item_name in self:
+        if not self.has_item(item_name):
             raise NoItemException(item_name + " is not in inventory")
         
         count = min(count, self.item_count(item_name))
@@ -361,7 +361,7 @@ class Participant():
             self.item_counts_for_bugged_limits[item_name] = 0
         
     def has_item(self, name):
-        return name in self.inventory
+        return self.inventory.has_item(name)
     
     def consume_item(self, name):
         self.inventory.consume_item(name)
@@ -449,7 +449,7 @@ class Dealer(Participant):
             self.dealer_knows_shell = True
         
         # determine if we have cigarettes
-        has_cigs = self.inventory.has_item("cigarettes")
+        has_cigs = self.inventory.has_item("cigs")
         
         
         
