@@ -389,9 +389,21 @@ class Dealer(Participant):
         super().__init__("Dealer")
         
         self.dealer_target = ""
-        self.known_shell = ""
+        self.known_shell = None
         self.dealer_knows_shell = False
+        self.using_medicine = False
+        self.using_handsaw = False
+        self.main_loop_finished = False
     
+    # not a true coin flip, but used by the dealer to make decisions if he doesn't know what to do for certain
+    def coin_flip(self, run):
+        c_live = run.num_live()
+        c_blank = run.num_blank()
+        
+        if c_live == c_blank: return random.randint(0, 1)
+        if c_live > c_blank: return 1
+        if c_live < c_blank: return 0
+        
     # equivalent to FigureOutNextShell in DealerIntelligence.gd
     # attempts to determine if the dealer is logically allowed to know what the next shell is
     def can_peek_next_shell(self, run):
@@ -421,39 +433,143 @@ class Dealer(Participant):
     # the logic for this is meant to be as close to the exact logic as implemented in DealerIntelligence.gd, with as little re-writing as possible to ensure authenticity though with a bit more documentation for my own sake
     # there will be some differences.  notably, a lot of game logic is handled inside the dealer intelligence normally, but here is handled elsewhere.
     def take_turn(self, run):
-        desired_item_to_use = ""
-        has_cigs = False
+        self.main_loop_finished = False
+        self.using_handsaw = False
+        self.using_medicine = False
         
-        # figure out if the dealer is allowed to peek the next shell and who to target if he is
-        if not self.dealer_knows_shell:
-            self.dealer_knows_shell = self.can_peek_next_shell(run)
+        while True:
+            dealer_wants_to_use = ""
+            has_handsaw = False
+            has_cigs = False
             
-            if self.dealer_knows_shell:
-                if bullet_is_blank(run.peek_next_bullet()):
-                    self.known_shell = blank_token
+            # figure out if the dealer is allowed to peek the next shell and who to target if he is
+            if not self.dealer_knows_shell:
+                self.dealer_knows_shell = self.can_peek_next_shell(run)
+                
+                if self.dealer_knows_shell:
+                    if bullet_is_blank(run.peek_next_bullet()):
+                        self.known_shell = blank_token
+                        self.dealer_target = "self"
+                    else:
+                        self.known_shell = live_token
+                        self.dealer_target = "player"
+            
+            # do a completely unnecessary check, because if there's only one bullet left then the dealer would've been allowed to peek it above.
+            # again, avoiding rewriting just in case I'm wrong about something and this actually makes a difference somehow
+            if run.num_bullets_left() == 1:
+                self.known_shell = run.peek_next_bullet()
+                
+                if bullet_is_live(self.known_shell):
+                    self.dealer_target = "player"
+                else:
+                    self.dealer_target = "self"
+                
+                self.dealer_knows_shell = True
+            
+            # determine if we have cigarettes
+            has_cigs = self.inventory.has_item("cigs")
+            
+            # this doesn't necessarily mean he's definitely going to use adrenaline.  it just means he'll look at the player's items and consider using adrenaline
+            using_adrenaline = self.inventory.has_item("adrenaline")
+            
+            items_to_consider = self.inventory.items
+            
+            if using_adrenaline:
+                items_to_consider += run.player.inventory.items
+            
+            # pick an item to use
+            for item_name in items_to_consider:
+                if (item_name == "magnifier") and (not self.dealer_knows_shell) and (run.num_bullets_left() != 1):
+                    dealer_wants_to_use = item_name
+                    self.dealer_knows_shell = True
+                    break
+                
+                if item_name == "cigs":
+                    if self.health < self.current_max_health:
+                        dealer_wants_to_use = item_name
+                        has_cigs = False
+                        break
+                
+                if item_name == "medicine" and self.health < self.current_max_health and not has_cigs:
+                    if self.health != 1:
+                        dealer_wants_to_use = item_name
+                        self.using_medicine = True
+                        break
+                
+                if item_name == "beer" and not bullet_is_live(self.known_shell) and run.num_bullets_left() != 1:
+                    dealer_wants_to_use = item_name
+                    self.dealer_knows_shell = False
+                    self.known_shell = None
+                    break
+                
+                if item_name == "handcuffs" and not run.is_handcuffed(run.player) and run.num_bullets_left() != 1:
+                    dealer_wants_to_use = item_name
+                    break
+                
+                if item_name == "knife" and not run.is_sawed_off and bullet_is_live(self.known_shell):
+                    dealer_wants_to_use = item_name
+                    self.using_handsaw = True
+                    break
+                
+                if item_name == "phone" and run.num_bullets_left() > 2:
+                    dealer_wants_to_use = item_name
+                    break
+                
+                if item_name == "inverter" and self.dealer_knows_shell and bullet_is_blank(self.known_shell):
+                    dealer_wants_to_use = item_name
+                    self.known_shell = live_token
+                    self.dealer_knows_shell = True
+                    self.dealer_target = "player"
+                    break
+            
+            if dealer_wants_to_use == "":
+                self.main_loop_finished = True
+            
+            has_handsaw = self.inventory.has_item("knife")
+            
+            # fun condition where if the dealer isn't using an item but has a handsaw and knows the next shell isn't blank, he'll use the saw if there's more lives than blanks or on a 50/50 chance if the shells are even.  this is why he'll occasionally use the saw and it won't work.
+            if self.main_loop_finished and not self.using_handsaw and has_handsaw and not run.is_sawed_off and not bullet_is_blank(self.known_shell):
+                decision = self.coin_flip(run)
+                
+                if decision == 0:
                     self.dealer_target = "self"
                 else:
-                    self.known_shell = live_token
                     self.dealer_target = "player"
-        
-        # do a completely unnecessary check, because if there's only one bullet left then the dealer would've been allowed to peek it above.
-        # again, avoiding rewriting just in case I'm wrong about something and this actually makes a difference somehow
-        if run.num_bullets_left() == 1:
-            self.known_shell = run.peek_next_bullet()
+                    dealer_wants_to_use = "knife"
+                    self.using_handsaw = True
             
-            if bullet_is_live(self.known_shell):
-                self.dealer_target = "player"
+            # handle chosen item (if one was chosen)
+            if dealer_wants_to_use != "":
+                stealing_from_player = not self.inventory.has_item(dealer_wants_to_use)
+                
+                if stealing_from_player:
+                    # use own adrenaline to steal desired item
+                    run.use_adrenaline(dealer_wants_to_use)
+                else:
+                    # use item
+                    run.use_item(dealer_wants_to_use)
+                
+                # loop again to pick another item
             else:
-                self.dealer_target = "self"
-            
-            self.dealer_knows_shell = True
-        
-        # determine if we have cigarettes
-        has_cigs = self.inventory.has_item("cigs")
-        
-        
-        
-    
+                # determine who we're shooting
+                if self.dealer_target == "":
+                    decision = self.coin_flip(run)
+                    
+                    if decision == 0:
+                        self.dealer_target = "self"
+                    else:
+                        self.dealer_target = "player"
+                
+                shooting_self = self.dealer_target == "self"
+                
+                run.shoot(shooting_self)
+                
+                self.dealer_target = ""
+                self.known_shell = ""
+                self.dealer_knows_shell = False
+                
+                break
+
 # an entire run of buckshot roulette, see big comment at the start of the file for definition
 class BuckshotRun():
     nobody_id = -1
@@ -608,6 +724,8 @@ class BuckshotRun():
         user, opposite = self.whose_turn()
         
         if user.has_item(item_name):
+            print(user.name + " used " + item_name)
+            
             # use item
             user.consume_item(item_name)
             self.call_item_behavior(item_name, user, opposite)
@@ -778,11 +896,11 @@ def main(argc, argv):
                         
                         used_adrenaline = True
                         
-                        print("used adrenaline to steal " + use_item)
+                        # print("used adrenaline to steal " + use_item)
                     else:
                         run.use_item(use_item)
                         
-                        print("used " + use_item)
+                        # print("used " + use_item)
                     
                     print("")
                     
