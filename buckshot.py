@@ -118,7 +118,7 @@ def adrenaline_behavior(run, user, opposite):
         # decrement opposite counter
         opposite.consume_item(steal_item)
     except NoItemException as e:
-        raise NoItemException("opposite player doesn't have " + steal_item)
+        raise NoItemException(opposite.name + " doesn't have " + steal_item)
     
     # give item to user
     # circumvents user counter
@@ -275,6 +275,9 @@ class Inventory():
         
         return inventory
     
+    def as_list(self):
+        return self.items.copy()
+    
     def item_count(self, item_name):
         self.check_item_validity(item_name)
         
@@ -394,6 +397,22 @@ class Dealer(Participant):
         self.using_medicine = False
         self.using_handsaw = False
         self.main_loop_finished = False
+        
+        # we have a separate list for this because it doesn't necessarily just contain items that the dealer has
+        self.item_array_dealer = []
+    
+    # overrides for handling item_array_dealer
+    def reset_items(self):
+        super().reset_items()
+        
+        self.item_array_dealer = []
+    
+    def give_items(self, inventory_of_items):
+        super().give_items(inventory_of_items)
+        
+        self.item_array_dealer += inventory_of_items.as_list()
+    
+    # brain time
     
     # not a true coin flip, but used by the dealer to make decisions if he doesn't know what to do for certain
     def coin_flip(self, run):
@@ -467,21 +486,26 @@ class Dealer(Participant):
                 self.dealer_knows_shell = True
             
             # determine if we have cigarettes
-            has_cigs = self.inventory.has_item("cigs")
+            has_cigs = "cigs" in self.item_array_dealer
             
             # this doesn't necessarily mean he's definitely going to use adrenaline.  it just means he'll look at the player's items and consider using adrenaline
             using_adrenaline = self.inventory.has_item("adrenaline")
             
-            items_to_consider = self.inventory.items
+            self.item_array_dealer = self.inventory.as_list()
             
             if using_adrenaline:
-                items_to_consider += run.player.inventory.items
+                self.item_array_dealer += run.player.inventory.as_list()
             
             # pick an item to use
-            for item_name in items_to_consider:
+            for item_name in self.item_array_dealer:
                 if (item_name == "magnifier") and (not self.dealer_knows_shell) and (run.num_bullets_left() != 1):
                     dealer_wants_to_use = item_name
                     self.dealer_knows_shell = True
+                    self.known_shell = run.peek_next_bullet()
+                    if bullet_is_live(self.known_shell):
+                        self.dealer_target = "player"
+                    else:
+                        self.dealer_target = "self"
                     break
                 
                 if item_name == "cigs":
@@ -490,7 +514,7 @@ class Dealer(Participant):
                         has_cigs = False
                         break
                 
-                if item_name == "medicine" and self.health < self.current_max_health and not has_cigs:
+                if item_name == "medicine" and self.health < self.current_max_health and not has_cigs and not self.using_medicine:
                     if self.health != 1:
                         dealer_wants_to_use = item_name
                         self.using_medicine = True
@@ -525,7 +549,7 @@ class Dealer(Participant):
             if dealer_wants_to_use == "":
                 self.main_loop_finished = True
             
-            has_handsaw = self.inventory.has_item("knife")
+            has_handsaw = "knife" in self.item_array_dealer
             
             # fun condition where if the dealer isn't using an item but has a handsaw and knows the next shell isn't blank, he'll use the saw if there's more lives than blanks or on a 50/50 chance if the shells are even.  this is why he'll occasionally use the saw and it won't work.
             if self.main_loop_finished and not self.using_handsaw and has_handsaw and not run.is_sawed_off and not bullet_is_blank(self.known_shell):
@@ -549,6 +573,8 @@ class Dealer(Participant):
                     # use item
                     run.use_item(dealer_wants_to_use)
                 
+                self.item_array_dealer.remove(dealer_wants_to_use)
+                
                 # loop again to pick another item
             else:
                 # determine who we're shooting
@@ -568,6 +594,7 @@ class Dealer(Participant):
                 self.known_shell = ""
                 self.dealer_knows_shell = False
                 
+                # end turn, game will call on this method again if we get another turn
                 break
 
 # an entire run of buckshot roulette, see big comment at the start of the file for definition
@@ -727,8 +754,8 @@ class BuckshotRun():
             print(user.name + " used " + item_name)
             
             # use item
-            user.consume_item(item_name)
             self.call_item_behavior(item_name, user, opposite)
+            user.consume_item(item_name)
         else:
             raise NoItemException(item_name + " isn't in " + user.name + "'s inventory.")
     
@@ -851,7 +878,8 @@ def main(argc, argv):
     # debugging lines for giving player items to test at start
     # test_inventory = Inventory()
     
-    # test_inventory.add_item("adrenaline")
+    # test_inventory.add_item("medicine", 1)
+    # run.player.health = 1
     
     # run.player.give_items(test_inventory)
     
@@ -866,9 +894,7 @@ def main(argc, argv):
         print("")
         
         print("player items: " + str(run.player.inventory))
-        print(run.player.inventory.items)
         print("dealer items: " + str(run.dealer.inventory))
-        print(run.dealer.inventory.items)
         print("")
         
         print("num live: " + str(run.num_live()))
