@@ -48,6 +48,17 @@ def medicine_behavior(run, user, opposite):
         user.give_health(2)
     else:
         user.take_damage(1)
+        
+        # check game end conditions
+        if run.player.is_dead():
+            # game over, quit logic
+            run.game_over = True
+            
+            raise RoundResetException()
+        elif run.dealer.is_dead():
+            run.on_round_end()
+            
+            raise RoundResetException()
 
 def magnifier_behavior(run, user, opposite):
     user.known_sequence[0] = run.peek_next_bullet()
@@ -819,6 +830,7 @@ class BuckshotRun():
         self.is_sawed_off = False
         
         # reload
+        self.empty_chamber()
         self.load_chamber()
         
         # participants don't know new sequence
@@ -855,7 +867,8 @@ class BuckshotRun():
             self.dealer.reset_items()
         
         self.give_both_random_health()
-        self.empty_chamber()
+        
+        self.on_set_end()
         
     # if it's the dealer's turn, run the dealer ai until the dealer finishes his turn.
     def dealer_ai_turn(self):
@@ -879,9 +892,9 @@ def main(argc, argv):
     # test_inventory = Inventory()
     
     # test_inventory.add_item("medicine", 1)
-    # run.player.health = 1
+    # run.dealer.health = 1
     
-    # run.player.give_items(test_inventory)
+    # run.dealer.give_items(test_inventory)
     
     while not run.is_over():
         # print(run.chamber)
@@ -971,7 +984,10 @@ def main(argc, argv):
             # run.shoot(bool(random.randint(0, 1)))
         else:
             print("taking dealer turn")
-            run.dealer_ai_turn()
+            try:
+                run.dealer_ai_turn()
+            except RoundResetException:
+                dont_shoot = True
         
         fired = run.get_last_shell_fired()
         
