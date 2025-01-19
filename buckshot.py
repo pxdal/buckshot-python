@@ -207,7 +207,7 @@ class InvalidItemException(Exception):
 class RoundResetException(Exception):
     pass
 
-# player inventory
+# re-written inventory to support item ordering
 class Inventory():
     # generate an inventory of num random items.
     # limits is also an inventory of items.  it gives limits to the number of items that can be in the random inventory.  if limits is None, then no limits are applied.
@@ -241,67 +241,63 @@ class Inventory():
         return random_inventory
     
     def __init__(self, max_items=None):
-        self.inventory = dict()
+        self.items = list()
         self.max_items = max_items
         
-        # initialize counts
         self.reset()
     
-    def __contains__(self, item_name):
+    def check_item_validity(self, item_name):
         if not item_name in all_item_names:
             raise InvalidItemException("Invalid item " + item_name)
         
-        return self.inventory[item_name] > 0
+    def __contains__(self, item_name):
+        self.check_item_validity(item_name)
+        
+        return item_name in self.items
     
     def __str__(self):
-        return str(self.inventory)
+        return str(self.as_dict())
     
     def __len__(self):
-        return sum(self.inventory.values())
+        return len(self.items)
     
     def reset(self):
-        self.inventory = dict()
-        
-        for item_name in all_item_names:
-            self.inventory[item_name] = 0
-        
+        self.items = list()
+    
     def num_items(self):
         return len(self)
-        
+    
     def as_dict(self):
-        return self.inventory
+        inventory = dict()
+        
+        for item_name in all_item_names:
+            inventory[item_name] = self.item_count(item_name)
+        
+        return inventory
     
     def item_count(self, item_name):
-        if not item_name in all_item_names:
-            raise InvalidItemException("Invalid item " + item_name)
+        self.check_item_validity(item_name)
         
-        return self.inventory[item_name]
+        return self.items.count(item_name)
     
     def add_item(self, item_name, count=1):
-        if not item_name in all_item_names:
-            raise InvalidItemException("Invalid item " + item_name)
+        self.items += [item_name] * count
         
-        if self.max_items != None and self.num_items()+count >= self.max_items:
-            count = self.max_items - self.num_items()
-            
-            if count == 0:
-                # TODO: more than silent fail?
-                return
-            
-        self.inventory[item_name] += count
-        
+        if not self.max_items is None:
+            self.items = self.items[:self.max_items]
+    
     def add_inventory(self, inventory):
-        for item_name in inventory.as_dict().keys():
-            self.add_item(item_name, count=inventory.item_count(item_name))
-        
+        for item_name in inventory.items:
+            self.add_item(item_name)
+    
     def consume_item(self, item_name, count=1):
         if not item_name in self:
             raise NoItemException(item_name + " is not in inventory")
-
-        self.inventory[item_name] -= count
         
-        # just use the remainder of our items if it exceeds the count we have
-        self.inventory[item_name] = max(self.inventory[item_name], 0)
+        count = min(count, self.item_count(item_name))
+        
+        for i in range(count):
+            self.items.remove(item_name)
 
 # a participant in the game.  there are only two, the dealer and the player, but both inherit from this for shared behavior (such as health, items, etc.)
 class Participant():
@@ -391,9 +387,72 @@ class Participant():
 class Dealer(Participant):
     def __init__(self):
         super().__init__("Dealer")
+        
+        self.dealer_target = ""
+        self.known_shell = ""
+        self.dealer_knows_shell = False
     
+    # equivalent to FigureOutNextShell in DealerIntelligence.gd
+    # attempts to determine if the dealer is logically allowed to know what the next shell is
+    def can_peek_next_shell(self, run):
+        # if it's in the known sequence, sure
+        if self.known_sequence[0] != None:
+            return True
+        
+        # allow dealer to peek shell if we know there's zero lives or blanks left
+        # this also accounts for the known sequence.  if there's one live up ahead but the dealer knows where it is, the dealer is allowed to assume it's blank
+        num_live = run.num_live()
+        num_blank = run.num_blank()
+        
+        # NOTE: I think this first check is unnecessary, but keeping for authenticity
+        if num_live == 0: return True
+        if num_blank == 0: return True
+        
+        # account for memory
+        for c in self.known_sequence:
+            if bullet_is_live(c):
+                num_live -= 1
+            elif bullet_is_blank(c):
+                num_blank -= 1
+        
+        if num_live == 0: return True
+        if num_blank == 0: return True
+        
+    # the logic for this is meant to be as close to the exact logic as implemented in DealerIntelligence.gd, with as little re-writing as possible to ensure authenticity though with a bit more documentation for my own sake
+    # there will be some differences.  notably, a lot of game logic is handled inside the dealer intelligence normally, but here is handled elsewhere.
     def take_turn(self, run):
-        run.shoot(bool(random.randint(0, 1)))
+        desired_item_to_use = ""
+        has_cigs = False
+        
+        # figure out if the dealer is allowed to peek the next shell and who to target if he is
+        if not self.dealer_knows_shell:
+            self.dealer_knows_shell = self.can_peek_next_shell(run)
+            
+            if self.dealer_knows_shell:
+                if bullet_is_blank(run.peek_next_bullet()):
+                    self.known_shell = blank_token
+                    self.dealer_target = "self"
+                else:
+                    self.known_shell = live_token
+                    self.dealer_target = "player"
+        
+        # do a completely unnecessary check, because if there's only one bullet left then the dealer would've been allowed to peek it above.
+        # again, avoiding rewriting just in case I'm wrong about something and this actually makes a difference somehow
+        if run.num_bullets_left() == 1:
+            self.known_shell = run.peek_next_bullet()
+            
+            if bullet_is_live(self.known_shell):
+                self.dealer_target = "player"
+            else:
+                self.dealer_target = "self"
+            
+            self.dealer_knows_shell = True
+        
+        # determine if we have cigarettes
+        has_cigs = self.inventory.has_item("cigarettes")
+        
+        
+        
     
 # an entire run of buckshot roulette, see big comment at the start of the file for definition
 class BuckshotRun():
@@ -689,7 +748,9 @@ def main(argc, argv):
         print("")
         
         print("player items: " + str(run.player.inventory))
+        print(run.player.inventory.items)
         print("dealer items: " + str(run.dealer.inventory))
+        print(run.dealer.inventory.items)
         print("")
         
         print("num live: " + str(run.num_live()))
