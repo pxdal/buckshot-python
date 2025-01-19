@@ -653,6 +653,9 @@ class BuckshotRun():
         # initialize game
         self.on_set_end()
     
+    def rounds_won(self):
+        return self.matches_won * rounds_per_match + (self.current_round - 1)
+        
     # check integer ids
     def is_player(self, int_id):
         return int_id == self.player_id
@@ -899,7 +902,7 @@ def main(argc, argv):
     while not run.is_over():
         # print(run.chamber)
         print("round " + str(run.current_round))
-        print("player has won: " + str(run.matches_won) + " matches")
+        print("player has won: " + str(run.matches_won) + " matches and " + str(run.rounds_won()) + " rounds")
         print("")
         
         print("player health: " + str(run.player.health))
