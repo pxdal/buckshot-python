@@ -133,7 +133,8 @@ def adrenaline_behavior(run, user, opposite):
     
     # give item to user
     # circumvents user counter
-    user.inventory.add_item(steal_item)
+    # also ignore limits so that a full inventory doesn't prevent adrenaline usage
+    user.inventory.add_item(steal_item, ignore_limits=True)
     
     # use item immediately
     # decrement user counter
@@ -294,10 +295,10 @@ class Inventory():
         
         return self.items.count(item_name)
     
-    def add_item(self, item_name, count=1):
+    def add_item(self, item_name, count=1, ignore_limits=False):
         self.items += [item_name] * count
         
-        if not self.max_items is None:
+        if (not self.max_items is None) and not ignore_limits:
             self.items = self.items[:self.max_items]
     
     def add_inventory(self, inventory):
