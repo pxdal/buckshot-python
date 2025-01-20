@@ -305,13 +305,15 @@ class Inventory():
         for item_name in inventory.items:
             self.add_item(item_name)
     
-    def consume_item(self, item_name, count=1):
-        if not self.has_item(item_name):
+    # default behavior is to remove item_name from the inventory count times, or until the item is fully exhausted.  this will raise a NoItemException if the item isn't in the inventory.
+    # if consume_all is True, count is ignored and instead all instances of item_name are removed from the inventory.  this will NOT raise a NoItemException (or any exception) if the item isn't in the inventory.
+    def consume_item(self, item_name, count=1, consume_all=False):
+        if not self.has_item(item_name) and not consume_all:
             raise NoItemException(item_name + " is not in inventory")
         
         count = min(count, self.item_count(item_name))
         
-        if count < 1:
+        if consume_all:
             while item_name in self.items:
                 self.items.remove(item_name)
         else:
@@ -619,7 +621,7 @@ class BuckshotRun():
     player_id = 0
     dealer_id = 1
     
-    def __init__(self):
+    def __init__(self, logging=True):
         self.player = Participant("Player")
         self.dealer = Dealer()
         
@@ -661,6 +663,8 @@ class BuckshotRun():
         
         # the desired item to steal from opposite of whomever is using adrenaline
         self.desired_steal_item = None
+        
+        self.logging = logging
         
         # initialize game
         self.on_set_end()
@@ -777,7 +781,7 @@ class BuckshotRun():
         user, opposite = self.whose_turn()
         
         if user.has_item(item_name):
-            print(user.name + " used " + item_name)
+            if self.logging: print(user.name + " used " + item_name)
             
             # use item
             self.call_item_behavior(item_name, user, opposite)
@@ -800,14 +804,14 @@ class BuckshotRun():
         shooter, opposite = self.whose_turn()
         
         if not shooting_self:
-            print(shooter.name + " shot " + opposite.name)
+            if self.logging: print(shooter.name + " shot " + opposite.name)
             
             opposite.take_damage(damage)
             
             if not self.is_handcuffed(opposite, uncuff=True):
                 self.swap_turn()
         else:
-            print(shooter.name + " shot themselves")
+            if self.logging: print(shooter.name + " shot themselves")
             
             shooter.take_damage(damage)
             
@@ -865,8 +869,8 @@ class BuckshotRun():
         
         # don't allow handsaw on very first set if health is 2=
         if self.current_set == 0 and self.player.current_max_health == 2:
-            player_limit_inventory.consume_item("handsaw", count=-1)
-            dealer_limit_inventory.consume_item("handsaw", count=-1)
+            player_limit_inventory.consume_item("handsaw", consume_all=True)
+            dealer_limit_inventory.consume_item("handsaw", consume_all=True)
         
         player_items = Inventory.get_random_items(num_items, limits=player_limit_inventory)
         dealer_items = Inventory.get_random_items(num_items, limits=dealer_limit_inventory)
