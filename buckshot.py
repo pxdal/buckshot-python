@@ -296,8 +296,11 @@ class Inventory():
         return self.items.count(item_name)
     
     def add_item(self, item_name, count=1, ignore_limits=False):
-        self.items += [item_name] * count
-        
+        if not ignore_limits:
+            self.items += [item_name] * count
+        else:
+            self.items = [item_name] * count + self.items
+            
         if (not self.max_items is None) and not ignore_limits:
             self.items = self.items[:self.max_items]
     
