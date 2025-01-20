@@ -631,6 +631,10 @@ class BuckshotRun():
         # matches won by the player (if the dealer wins any, it's just game over)
         self.matches_won = 0
         
+        # sets won by the player (if the dealer wins any, it's just game over)
+        # defaults to -1 so that on_set_end below doesn't mis-increment it
+        self.sets_won = -1
+        
         # game state settings #
         
         # what set of the round we're on
@@ -835,6 +839,7 @@ class BuckshotRun():
     
     def on_set_end(self):
         # reset game state as needed
+        self.sets_won += 1
         
         # NOTE: we do this because we don't necessarily know that this was called after a shell was fired
         self.is_sawed_off = False
@@ -919,7 +924,7 @@ def main(argc, argv):
         # print(run.chamber)
         print("round " + str(run.current_round))
         print("set " + str(run.current_set))
-        print("player has won: " + str(run.matches_won) + " matches and " + str(run.rounds_won()) + " rounds")
+        print("player has won: " + str(run.matches_won) + " matches, " + str(run.rounds_won()) + " rounds, and survived " + str(run.sets_won) + " sets")
         print("")
         
         print("player health: " + str(run.player.health))
