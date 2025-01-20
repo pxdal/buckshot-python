@@ -35,7 +35,7 @@ sawedoff_live_damage = 2
 # all item behaviors require a user and the opposite player.
 # some items require additional input from the user.  not sure what to do about that yet.
 
-def knife_behavior(run, user, opposite):
+def handsaw_behavior(run, user, opposite):
     run.is_sawed_off = True
 
 def cigs_behavior(run, user, opposite):
@@ -61,20 +61,20 @@ def medicine_behavior(run, user, opposite):
             raise RoundResetException()
 
 def magnifier_behavior(run, user, opposite):
-    user.known_sequence[0] = run.peek_next_bullet()
+    user.known_sequence[0] = run.peek_next_shell()
 
 def inverter_behavior(run, user, opposite):
-    run.invert_next_bullet()
+    run.invert_next_shell()
 
 def phone_behavior(run, user, opposite):
-    num_bullets_left = run.num_bullets_left()
+    num_shells_left = run.num_shells_left()
     
-    if num_bullets_left < 2:
+    if num_shells_left < 2:
         # cell phone says "how unfortunate..." for less than two rounds
         return
     
-    # pick a random bullet
-    reveal_pos = random.randint(1, num_bullets_left-1)
+    # pick a random shell
+    reveal_pos = random.randint(1, num_shells_left-1)
     
     # NOTE: this is authentic behavior.  the burner phone is deliberately coded to not tell the player (and only the player) the location of the 8th shell.
     if user is run.player:
@@ -84,7 +84,7 @@ def phone_behavior(run, user, opposite):
     user.known_sequence[reveal_pos] = run.chamber[reveal_pos]
 
 def beer_behavior(run, user, opposite):
-    run.pop_next_bullet()
+    run.pop_next_shell()
     
     # run cleanup if chamber is empty
     if run.chamber_is_empty():
@@ -144,7 +144,7 @@ def adrenaline_behavior(run, user, opposite):
     
 # item settings #
 all_item_behaviors = {
-    "knife": knife_behavior,
+    "handsaw": handsaw_behavior,
     "cigs": cigs_behavior,
     "medicine": medicine_behavior,
     "magnifier": magnifier_behavior,
@@ -159,7 +159,7 @@ all_item_names = list(all_item_behaviors.keys())
 
 # set default limits
 default_item_limits = {
-    "knife": 3,
+    "handsaw": 3,
     "cigs": 1,
     "medicine": 1,
     "magnifier": 3,
@@ -172,11 +172,11 @@ default_item_limits = {
 
 ## utility methods ##
 
-def bullet_is_live(bullet):
-    return bullet == live_token
+def shell_is_live(shell):
+    return shell == live_token
 
-def bullet_is_blank(bullet):
-    return bullet == blank_token
+def shell_is_blank(shell):
+    return shell == blank_token
 
 # create a random sequence of lives and blanks using the global settings for live and blank tokens.
 # this follows the same rules as buckshot roulette, which is a little more particular than just random selection and order.  here are the rules:
@@ -456,9 +456,9 @@ class Dealer(Participant):
         
         # account for memory
         for c in self.known_sequence:
-            if bullet_is_live(c):
+            if shell_is_live(c):
                 num_live -= 1
-            elif bullet_is_blank(c):
+            elif shell_is_blank(c):
                 num_blank -= 1
         
         if num_live == 0: return True
@@ -481,19 +481,19 @@ class Dealer(Participant):
                 self.dealer_knows_shell = self.can_peek_next_shell(run)
                 
                 if self.dealer_knows_shell:
-                    if bullet_is_blank(run.peek_next_bullet()):
+                    if shell_is_blank(run.peek_next_shell()):
                         self.known_shell = blank_token
                         self.dealer_target = "self"
                     else:
                         self.known_shell = live_token
                         self.dealer_target = "player"
             
-            # do a completely unnecessary check, because if there's only one bullet left then the dealer would've been allowed to peek it above.
+            # do a completely unnecessary check, because if there's only one shell left then the dealer would've been allowed to peek it above.
             # again, avoiding rewriting just in case I'm wrong about something and this actually makes a difference somehow
-            if run.num_bullets_left() == 1:
-                self.known_shell = run.peek_next_bullet()
+            if run.num_shells_left() == 1:
+                self.known_shell = run.peek_next_shell()
                 
-                if bullet_is_live(self.known_shell):
+                if shell_is_live(self.known_shell):
                     self.dealer_target = "player"
                 else:
                     self.dealer_target = "self"
@@ -513,11 +513,11 @@ class Dealer(Participant):
             
             # pick an item to use
             for item_name in self.item_array_dealer:
-                if (item_name == "magnifier") and (not self.dealer_knows_shell) and (run.num_bullets_left() != 1):
+                if (item_name == "magnifier") and (not self.dealer_knows_shell) and (run.num_shells_left() != 1):
                     dealer_wants_to_use = item_name
                     self.dealer_knows_shell = True
-                    self.known_shell = run.peek_next_bullet()
-                    if bullet_is_live(self.known_shell):
+                    self.known_shell = run.peek_next_shell()
+                    if shell_is_live(self.known_shell):
                         self.dealer_target = "player"
                     else:
                         self.dealer_target = "self"
@@ -535,26 +535,26 @@ class Dealer(Participant):
                         self.using_medicine = True
                         break
                 
-                if item_name == "beer" and not bullet_is_live(self.known_shell) and run.num_bullets_left() != 1:
+                if item_name == "beer" and not shell_is_live(self.known_shell) and run.num_shells_left() != 1:
                     dealer_wants_to_use = item_name
                     self.dealer_knows_shell = False
                     self.known_shell = None
                     break
                 
-                if item_name == "handcuffs" and not run.is_handcuffed(run.player) and run.num_bullets_left() != 1:
+                if item_name == "handcuffs" and not run.is_handcuffed(run.player) and run.num_shells_left() != 1:
                     dealer_wants_to_use = item_name
                     break
                 
-                if item_name == "knife" and not run.is_sawed_off and bullet_is_live(self.known_shell):
+                if item_name == "handsaw" and not run.is_sawed_off and shell_is_live(self.known_shell):
                     dealer_wants_to_use = item_name
                     self.using_handsaw = True
                     break
                 
-                if item_name == "phone" and run.num_bullets_left() > 2:
+                if item_name == "phone" and run.num_shells_left() > 2:
                     dealer_wants_to_use = item_name
                     break
                 
-                if item_name == "inverter" and self.dealer_knows_shell and bullet_is_blank(self.known_shell):
+                if item_name == "inverter" and self.dealer_knows_shell and shell_is_blank(self.known_shell):
                     dealer_wants_to_use = item_name
                     self.known_shell = live_token
                     self.dealer_knows_shell = True
@@ -564,17 +564,17 @@ class Dealer(Participant):
             if dealer_wants_to_use == "":
                 self.main_loop_finished = True
             
-            has_handsaw = "knife" in self.item_array_dealer
+            has_handsaw = "handsaw" in self.item_array_dealer
             
             # fun condition where if the dealer isn't using an item but has a handsaw and knows the next shell isn't blank, he'll use the saw if there's more lives than blanks or on a 50/50 chance if the shells are even.  this is why he'll occasionally use the saw and it won't work.
-            if self.main_loop_finished and not self.using_handsaw and has_handsaw and not run.is_sawed_off and not bullet_is_blank(self.known_shell):
+            if self.main_loop_finished and not self.using_handsaw and has_handsaw and not run.is_sawed_off and not shell_is_blank(self.known_shell):
                 decision = self.coin_flip(run)
                 
                 if decision == 0:
                     self.dealer_target = "self"
                 else:
                     self.dealer_target = "player"
-                    dealer_wants_to_use = "knife"
+                    dealer_wants_to_use = "handsaw"
                     self.using_handsaw = True
             
             # handle chosen item (if one was chosen)
@@ -625,7 +625,7 @@ class BuckshotRun():
         # initial health
         self.give_both_random_health()
         
-        # the current sequence of bullets in the chamber
+        # the current sequence of shells in the chamber
         self.chamber = []
         
         # matches won by the player (if the dealer wins any, it's just game over)
@@ -685,21 +685,21 @@ class BuckshotRun():
     def num_blank(self):
         return self.chamber.count(blank_token)
     
-    def num_bullets_left(self):
+    def num_shells_left(self):
         return len(self.chamber)
     
-    # returns the next bullet without removing it from the chamber
-    def peek_next_bullet(self):
+    # returns the next shell without removing it from the chamber
+    def peek_next_shell(self):
         return self.chamber[0]
     
-    # pops the bullet from the front and returns it
-    def pop_next_bullet(self):
+    # pops the shell from the front and returns it
+    def pop_next_shell(self):
         self.player.pop_known_sequence()
         self.dealer.pop_known_sequence()
         
         return self.chamber.pop(0)
     
-    def invert_next_bullet(self):
+    def invert_next_shell(self):
         if self.chamber[0] == live_token:
             self.chamber[0] = blank_token
         else:
@@ -726,9 +726,9 @@ class BuckshotRun():
         self.player.set_health(health)
         self.dealer.set_health(health)
     
-    # get the provided bullet's damage accounting for current game state
-    def get_bullet_current_damage(self, bullet):
-        if bullet_is_blank(bullet):
+    # get the provided shell's damage accounting for current game state
+    def get_shell_current_damage(self, shell):
+        if shell_is_blank(shell):
             return 0
         elif self.is_sawed_off:
             return sawedoff_live_damage
@@ -789,8 +789,8 @@ class BuckshotRun():
         
     # whomever has this turn fires the gun.  because shooting the gun tends to be the last action before switching turns, sets, etc., this also handles most of the state transition logic
     def shoot(self, shooting_self):
-        bullet = self.pop_next_bullet()
-        damage = self.get_bullet_current_damage(bullet)
+        shell = self.pop_next_shell()
+        damage = self.get_shell_current_damage(shell)
         
         shooter, opposite = self.whose_turn()
         
@@ -806,14 +806,14 @@ class BuckshotRun():
             
             shooter.take_damage(damage)
             
-            if bullet_is_live(bullet):
+            if shell_is_live(shell):
                 # this is nested so that the uncuff only happens if the shell is live.  if the shell is blank then the shooter gets the next turn anyways without checking the cuffs
                 if not self.is_handcuffed(opposite, uncuff=True):
                     self.swap_turn()
         
         # reset game state as needed
         
-        self.last_shell_fired = bullet
+        self.last_shell_fired = shell
         
         # always resets
         self.is_sawed_off = False
@@ -831,7 +831,7 @@ class BuckshotRun():
                 self.on_set_end()
         
         # return fired shell
-        return bullet
+        return shell
     
     def on_set_end(self):
         # reset game state as needed
@@ -857,10 +857,10 @@ class BuckshotRun():
         player_limit_inventory = self.player.get_limit_inventory()
         dealer_limit_inventory = self.dealer.get_limit_inventory()
         
-        # don't allow knife on very first set if health is 2=
+        # don't allow handsaw on very first set if health is 2=
         if self.current_set == 0 and self.player.current_max_health == 2:
-            player_limit_inventory.consume_item("knife", count=-1)
-            dealer_limit_inventory.consume_item("knife", count=-1)
+            player_limit_inventory.consume_item("handsaw", count=-1)
+            dealer_limit_inventory.consume_item("handsaw", count=-1)
         
         player_items = Inventory.get_random_items(num_items, limits=player_limit_inventory)
         dealer_items = Inventory.get_random_items(num_items, limits=dealer_limit_inventory)
@@ -1000,7 +1000,7 @@ def main(argc, argv):
                     print("pick!")
             
             # print("taking player turn")
-            # run.shoot(bullet_is_blank(run.peek_next_bullet()))
+            # run.shoot(shell_is_blank(run.peek_next_shell()))
             # run.shoot(bool(random.randint(0, 1)))
         else:
             print("taking dealer turn")
@@ -1012,7 +1012,7 @@ def main(argc, argv):
         fired = run.get_last_shell_fired()
         
         if not dont_shoot:
-            if bullet_is_live(fired):
+            if shell_is_live(fired):
                 print("shell was live")
             else:
                 print("shell was blank")
